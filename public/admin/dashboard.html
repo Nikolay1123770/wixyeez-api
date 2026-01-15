@@ -88,16 +88,101 @@
             <!-- Category Breakdown -->
             <div class="section-card">
                 <h2>Products by Category</h2>
-                <div id="categoryBreakdown" class="category-list"></div>
+                <div id="categoryBreakdown" class="category-list">
+                    <p>Loading...</p>
+                </div>
             </div>
         </main>
     </div>
     
-    <script src="admin.js"></script>
     <script>
-        // Load stats on page load
-        window.addEventListener('DOMContentLoaded', () => {
+        // Check auth
+        function checkAuth() {
+            const isLoggedIn = localStorage.getItem('admin_logged_in');
+            const username = localStorage.getItem('admin_username');
+            
+            if (!isLoggedIn) {
+                window.location.href = '/admin/login';
+                return false;
+            }
+            
+            if (username) {
+                document.getElementById('adminUsername').textContent = username;
+            }
+            
+            return true;
+        }
+        
+        // Logout
+        document.getElementById('logoutBtn').addEventListener('click', (e) => {
+            e.preventDefault();
+            localStorage.removeItem('admin_logged_in');
+            localStorage.removeItem('admin_username');
+            window.location.href = '/admin/login';
+        });
+        
+        // Load stats
+        async function loadDashboard() {
+            if (!checkAuth()) return;
+            
+            try {
+                const response = await fetch('/api/stats.php', {
+                    credentials: 'include'
+                });
+                
+                if (response.status === 401) {
+                    localStorage.removeItem('admin_logged_in');
+                    window.location.href = '/admin/login';
+                    return;
+                }
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    document.getElementById('totalProducts').textContent = data.stats.products;
+                    document.getElementById('totalOrders').textContent = data.stats.orders;
+                    document.getElementById('totalRevenue').textContent = Math.round(data.stats.revenue) + '₽';
+                    document.getElementById('todayOrders').textContent = data.stats.today_orders;
+                    
+                    // Category breakdown
+                    const categoryBreakdown = document.getElementById('categoryBreakdown');
+                    if (data.stats.categories && data.stats.categories.length > 0) {
+                        categoryBreakdown.innerHTML = data.stats.categories.map(cat => `
+                            <div class="category-item">
+                                <span class="category-name">
+                                    ${getCategoryEmoji(cat.category)} ${cat.category}
+                                </span>
+                                <span class="category-count">${cat.count}</span>
+                            </div>
+                        `).join('');
+                    } else {
+                        categoryBreakdown.innerHTML = '<p>No categories yet</p>';
+                    }
+                }
+            } catch (error) {
+                console.error('Failed to load stats:', error);
+            }
+        }
+        
+        function getCategoryEmoji(category) {
+            const emojis = {
+                'Услуги': '🛡️',
+                'Сеты': '📦',
+                'Сопровождение': '🎯'
+            };
+            return emojis[category] || '🔥';
+        }
+        
+        function refreshStats() {
             loadDashboard();
+            alert('Stats refreshed!');
+        }
+        
+        // Load on page load
+        window.addEventListener('DOMContentLoaded', () => {
+            if (checkAuth()) {
+                loadDashboard();
+            }
         });
     </script>
 </body>
