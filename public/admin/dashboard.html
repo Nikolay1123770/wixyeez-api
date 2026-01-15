@@ -3,19 +3,124 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WIXYEEZ Admin Dashboard</title>
+    <title>🚀 WIXYEEZ Admin Dashboard v3.0</title>
     <link rel="stylesheet" href="styles.css">
+    <style>
+        /* Real-time updates styles */
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: linear-gradient(135deg, #FF5722, #FF9800);
+            color: white;
+            padding: 15px 25px;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            z-index: 10000;
+            animation: slideIn 0.5s ease;
+            max-width: 300px;
+        }
+        
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        
+        .live-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            background: #4CAF50;
+            border-radius: 50%;
+            margin-right: 8px;
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(76, 175, 80, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(76, 175, 80, 0); }
+        }
+        
+        .orders-preview {
+            background: white;
+            border-radius: 15px;
+            padding: 20px;
+            margin-top: 20px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }
+        
+        .order-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px;
+            border-left: 4px solid #4CAF50;
+            background: #f8f9fa;
+            margin: 8px 0;
+            border-radius: 8px;
+            transition: all 0.3s;
+        }
+        
+        .order-item.new {
+            border-left-color: #FF5722;
+            background: linear-gradient(90deg, rgba(255, 87, 34, 0.1), rgba(255, 152, 0, 0.1));
+            animation: pulse-order 2s infinite;
+        }
+        
+        @keyframes pulse-order {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.8; }
+        }
+        
+        .quick-stats {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .quick-stat {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            padding: 15px;
+            border-radius: 12px;
+            text-align: center;
+        }
+        
+        .connection-status {
+            position: fixed;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #4CAF50;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 12px;
+            z-index: 1000;
+        }
+        
+        .connection-status.disconnected {
+            background: #f44336;
+        }
+    </style>
 </head>
 <body>
+    <!-- Connection Status -->
+    <div class="connection-status" id="connectionStatus">
+        <span class="live-indicator"></span>Live Dashboard
+    </div>
+    
     <div class="admin-wrapper">
-        <!-- Sidebar -->
+        <!-- Enhanced Sidebar -->
         <aside class="sidebar">
             <div class="sidebar-header">
                 <div class="logo">
-                    <span class="logo-icon">👑</span>
+                    <span class="logo-icon">🚀</span>
                     <div>
                         <h2>WIXYEEZ</h2>
-                        <span>Admin Panel</span>
+                        <span>v3.0 Dashboard</span>
                     </div>
                 </div>
             </div>
@@ -24,10 +129,21 @@
                 <a href="/admin/dashboard" class="nav-item active">
                     <span class="nav-icon">📊</span>
                     Dashboard
+                    <span class="live-indicator"></span>
+                </a>
+                <a href="/admin/orders" class="nav-item">
+                    <span class="nav-icon">📦</span>
+                    Orders
+                    <span class="badge" id="newOrdersBadge">0</span>
                 </a>
                 <a href="/admin/products" class="nav-item">
-                    <span class="nav-icon">📦</span>
+                    <span class="nav-icon">🛍️</span>
                     Products
+                </a>
+                <a href="/admin/chat" class="nav-item">
+                    <span class="nav-icon">💬</span>
+                    Chat
+                    <span class="badge" id="unreadChatBadge">0</span>
                 </a>
                 <a href="#" class="nav-item" id="logoutBtn">
                     <span class="nav-icon">🚪</span>
@@ -39,64 +155,252 @@
         <!-- Main Content -->
         <main class="main-content">
             <header class="main-header">
-                <h1>Dashboard</h1>
-                <div class="header-user">
-                    <span id="adminUsername">Admin</span>
+                <div>
+                    <h1>🚀 Real-time Dashboard</h1>
+                    <p>Welcome back, <span id="adminUsername">Admin</span>!</p>
+                </div>
+                <div class="header-actions">
+                    <button class="btn-primary" onclick="testNotification()">
+                        🔔 Test Notification
+                    </button>
+                    <button class="btn-secondary" onclick="refreshAll()">
+                        🔄 Refresh
+                    </button>
                 </div>
             </header>
             
-            <!-- Stats Grid -->
+            <!-- Enhanced Stats Grid -->
             <div class="stats-grid">
                 <div class="stat-card">
-                    <div class="stat-icon">📦</div>
+                    <div class="stat-icon">🛍️</div>
                     <div class="stat-value" id="totalProducts">0</div>
-                    <div class="stat-label">Total Products</div>
+                    <div class="stat-label">Products</div>
+                    <div class="stat-trend" id="productsTrend">📈</div>
                 </div>
                 
                 <div class="stat-card">
-                    <div class="stat-icon">🛒</div>
+                    <div class="stat-icon">📦</div>
                     <div class="stat-value" id="totalOrders">0</div>
                     <div class="stat-label">Total Orders</div>
+                    <div class="stat-trend" id="ordersTrend">📊</div>
                 </div>
                 
                 <div class="stat-card">
                     <div class="stat-icon">💰</div>
                     <div class="stat-value" id="totalRevenue">0₽</div>
-                    <div class="stat-label">Total Revenue</div>
+                    <div class="stat-label">Revenue</div>
+                    <div class="stat-trend" id="revenueTrend">💹</div>
                 </div>
                 
                 <div class="stat-card">
-                    <div class="stat-icon">📈</div>
+                    <div class="stat-icon">⚡</div>
                     <div class="stat-value" id="todayOrders">0</div>
-                    <div class="stat-label">Today's Orders</div>
+                    <div class="stat-label">Today</div>
+                    <div class="stat-trend" id="todayTrend">🔥</div>
+                </div>
+                
+                <div class="stat-card">
+                    <div class="stat-icon">🆕</div>
+                    <div class="stat-value" id="newOrders">0</div>
+                    <div class="stat-label">New Orders</div>
+                    <div class="stat-trend" id="newOrdersTrend">📢</div>
+                </div>
+                
+                <div class="stat-card">
+                    <div class="stat-icon">👥</div>
+                    <div class="stat-value" id="activeUsers">0</div>
+                    <div class="stat-label">Active Users</div>
+                    <div class="stat-trend" id="usersTrend">🔴</div>
                 </div>
             </div>
             
-            <!-- Quick Actions -->
+            <!-- Quick Actions */
             <div class="section-card">
-                <h2>Quick Actions</h2>
+                <h2>🚀 Quick Actions</h2>
                 <div class="quick-actions">
                     <a href="/admin/products" class="action-btn">
                         <span>➕</span> Add Product
                     </a>
-                    <button class="action-btn" onclick="refreshStats()">
-                        <span>🔄</span> Refresh Stats
+                    <a href="/admin/orders" class="action-btn">
+                        <span>📦</span> View Orders
+                    </a>
+                    <button class="action-btn" onclick="sendBroadcast()">
+                        <span>📢</span> Broadcast
+                    </button>
+                    <button class="action-btn" onclick="exportData()">
+                        <span>📊</span> Export Data
                     </button>
                 </div>
             </div>
             
-            <!-- Category Breakdown -->
+            <!-- Live Orders Preview -->
             <div class="section-card">
-                <h2>Products by Category</h2>
-                <div id="categoryBreakdown" class="category-list">
-                    <p>Loading...</p>
+                <h2>📦 Recent Orders <span class="live-indicator"></span></h2>
+                <div class="orders-preview" id="recentOrders">
+                    <p>Loading orders...</p>
+                </div>
+            </div>
+            
+            <!-- Performance Metrics -->
+            <div class="section-card">
+                <h2>📊 Performance</h2>
+                <div class="quick-stats">
+                    <div class="quick-stat">
+                        <div style="font-size: 24px;" id="conversionRate">0%</div>
+                        <div>Conversion Rate</div>
+                    </div>
+                    <div class="quick-stat">
+                        <div style="font-size: 24px;" id="avgOrderValue">0₽</div>
+                        <div>Avg Order Value</div>
+                    </div>
+                    <div class="quick-stat">
+                        <div style="font-size: 24px;" id="topProduct">Loading...</div>
+                        <div>Top Product</div>
+                    </div>
+                    <div class="quick-stat">
+                        <div style="font-size: 24px;" id="responseTime">0ms</div>
+                        <div>Response Time</div>
+                    </div>
                 </div>
             </div>
         </main>
     </div>
     
+    <!-- Audio for notifications -->
+    <audio id="orderSound" preload="auto">
+        <source src="data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwfBTmS3O/PeSMF" type="audio/wav">
+    </audio>
+
     <script>
-        // Check auth
+        let ws = null;
+        let isConnected = false;
+        let lastStats = {};
+
+        // Initialize WebSocket connection
+        function initWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}`;
+            
+            ws = new WebSocket(wsUrl);
+            
+            ws.onopen = function() {
+                console.log('🔌 WebSocket connected');
+                isConnected = true;
+                updateConnectionStatus(true);
+                
+                // Authenticate as admin
+                ws.send(JSON.stringify({
+                    type: 'admin_auth',
+                    token: localStorage.getItem('admin_logged_in')
+                }));
+                
+                // Request initial stats
+                ws.send(JSON.stringify({ type: 'get_stats' }));
+            };
+            
+            ws.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                handleWebSocketMessage(data);
+            };
+            
+            ws.onclose = function() {
+                console.log('🔌 WebSocket disconnected');
+                isConnected = false;
+                updateConnectionStatus(false);
+                
+                // Reconnect after 3 seconds
+                setTimeout(initWebSocket, 3000);
+            };
+            
+            ws.onerror = function(error) {
+                console.error('WebSocket error:', error);
+                updateConnectionStatus(false);
+            };
+        }
+        
+        // Handle WebSocket messages
+        function handleWebSocketMessage(data) {
+            switch(data.type) {
+                case 'new_order':
+                    handleNewOrder(data.order);
+                    showNotification('🆕 Новый заказ!', `От: ${data.order.customer_name}`);
+                    playOrderSound();
+                    break;
+                    
+                case 'stats_update':
+                    updateStatsDisplay(data.stats);
+                    break;
+                    
+                case 'auth_success':
+                    console.log('✅ Admin authenticated');
+                    break;
+            }
+        }
+        
+        // Handle new order
+        function handleNewOrder(order) {
+            // Update new orders counter
+            const currentCount = parseInt(document.getElementById('newOrders').textContent);
+            document.getElementById('newOrders').textContent = currentCount + 1;
+            document.getElementById('newOrdersBadge').textContent = currentCount + 1;
+            
+            // Add to recent orders
+            prependToRecentOrders(order);
+            
+            // Refresh stats
+            loadDashboard();
+        }
+        
+        // Play notification sound
+        function playOrderSound() {
+            const audio = document.getElementById('orderSound');
+            audio.volume = 0.5;
+            audio.play().catch(e => console.log('Audio play failed:', e));
+        }
+        
+        // Show notification
+        function showNotification(title, message, type = 'info') {
+            // Browser notification
+            if (Notification.permission === 'granted') {
+                const notification = new Notification(title, {
+                    body: message,
+                    icon: '/favicon.ico',
+                    tag: 'wixyeez-admin'
+                });
+                
+                setTimeout(() => notification.close(), 5000);
+            }
+            
+            // In-page notification
+            const notificationDiv = document.createElement('div');
+            notificationDiv.className = 'notification';
+            notificationDiv.innerHTML = `
+                <strong>${title}</strong><br>
+                ${message}
+            `;
+            
+            document.body.appendChild(notificationDiv);
+            
+            setTimeout(() => {
+                notificationDiv.style.animation = 'slideOut 0.5s ease forwards';
+                setTimeout(() => notificationDiv.remove(), 500);
+            }, 4000);
+        }
+        
+        // Update connection status
+        function updateConnectionStatus(connected) {
+            const statusEl = document.getElementById('connectionStatus');
+            
+            if (connected) {
+                statusEl.className = 'connection-status';
+                statusEl.innerHTML = '<span class="live-indicator"></span>Live Dashboard';
+            } else {
+                statusEl.className = 'connection-status disconnected';
+                statusEl.innerHTML = '🔴 Reconnecting...';
+            }
+        }
+        
+        // Check authentication
         function checkAuth() {
             const isLoggedIn = localStorage.getItem('admin_logged_in');
             const username = localStorage.getItem('admin_username');
@@ -113,77 +417,186 @@
             return true;
         }
         
-        // Logout
-        document.getElementById('logoutBtn').addEventListener('click', (e) => {
-            e.preventDefault();
-            localStorage.removeItem('admin_logged_in');
-            localStorage.removeItem('admin_username');
-            window.location.href = '/admin/login';
-        });
-        
-        // Load stats
+        // Load dashboard data
         async function loadDashboard() {
             if (!checkAuth()) return;
             
             try {
-                const response = await fetch('/api/stats.php', {
-                    credentials: 'include'
-                });
+                const [statsResponse, ordersResponse] = await Promise.all([
+                    fetch('/api/stats.php', { credentials: 'include' }),
+                    fetch('/api/orders?limit=5', { credentials: 'include' })
+                ]);
                 
-                if (response.status === 401) {
-                    localStorage.removeItem('admin_logged_in');
-                    window.location.href = '/admin/login';
-                    return;
+                if (statsResponse.ok) {
+                    const statsData = await statsResponse.json();
+                    if (statsData.success) {
+                        updateStatsDisplay(statsData.stats);
+                    }
                 }
                 
-                const data = await response.json();
-                
-                if (data.success) {
-                    document.getElementById('totalProducts').textContent = data.stats.products;
-                    document.getElementById('totalOrders').textContent = data.stats.orders;
-                    document.getElementById('totalRevenue').textContent = Math.round(data.stats.revenue) + '₽';
-                    document.getElementById('todayOrders').textContent = data.stats.today_orders;
-                    
-                    // Category breakdown
-                    const categoryBreakdown = document.getElementById('categoryBreakdown');
-                    if (data.stats.categories && data.stats.categories.length > 0) {
-                        categoryBreakdown.innerHTML = data.stats.categories.map(cat => `
-                            <div class="category-item">
-                                <span class="category-name">
-                                    ${getCategoryEmoji(cat.category)} ${cat.category}
-                                </span>
-                                <span class="category-count">${cat.count}</span>
-                            </div>
-                        `).join('');
-                    } else {
-                        categoryBreakdown.innerHTML = '<p>No categories yet</p>';
+                if (ordersResponse.ok) {
+                    const ordersData = await ordersResponse.json();
+                    if (ordersData.success) {
+                        displayRecentOrders(ordersData.orders);
                     }
                 }
             } catch (error) {
-                console.error('Failed to load stats:', error);
+                console.error('Failed to load dashboard:', error);
             }
         }
         
-        function getCategoryEmoji(category) {
-            const emojis = {
-                'Услуги': '🛡️',
-                'Сеты': '📦',
-                'Сопровождение': '🎯'
+        // Update stats display
+        function updateStatsDisplay(stats) {
+            const elements = {
+                'totalProducts': stats.products || 0,
+                'totalOrders': stats.orders || 0,
+                'totalRevenue': Math.round(stats.revenue || 0) + '₽',
+                'todayOrders': stats.today_orders || 0,
+                'newOrders': stats.new_orders || 0,
+                'activeUsers': stats.active_users || 0
             };
-            return emojis[category] || '🔥';
+            
+            // Update values with animation
+            Object.keys(elements).forEach(id => {
+                const element = document.getElementById(id);
+                if (element) {
+                    const oldValue = element.textContent;
+                    const newValue = elements[id];
+                    
+                    if (oldValue !== newValue.toString()) {
+                        element.style.animation = 'pulse 0.5s ease';
+                        element.textContent = newValue;
+                        setTimeout(() => element.style.animation = '', 500);
+                    }
+                }
+            });
+            
+            // Update performance metrics
+            if (stats.orders > 0) {
+                const conversionRate = ((stats.orders / (stats.products * 10)) * 100).toFixed(1);
+                const avgOrderValue = Math.round(stats.revenue / stats.orders);
+                
+                document.getElementById('conversionRate').textContent = conversionRate + '%';
+                document.getElementById('avgOrderValue').textContent = avgOrderValue + '₽';
+            }
+            
+            if (stats.top_product) {
+                document.getElementById('topProduct').textContent = stats.top_product;
+            }
+            
+            // Update badges
+            document.getElementById('newOrdersBadge').textContent = stats.new_orders || 0;
+            
+            lastStats = stats;
         }
         
-        function refreshStats() {
+        // Display recent orders
+        function displayRecentOrders(orders) {
+            const container = document.getElementById('recentOrders');
+            
+            if (orders.length === 0) {
+                container.innerHTML = '<p>No recent orders</p>';
+                return;
+            }
+            
+            container.innerHTML = orders.map(order => `
+                <div class="order-item ${order.status === 'new' ? 'new' : ''}">
+                    <div>
+                        <strong>#${order.id.slice(-8)}</strong> - ${order.customer_name}
+                        <br><small>💰 ${order.total_amount}₽ • 📱 ${order.contact_method}</small>
+                    </div>
+                    <div>
+                        <span style="background: ${order.status === 'new' ? '#FF5722' : '#4CAF50'}; 
+                                     padding: 4px 8px; border-radius: 12px; color: white; font-size: 12px;">
+                            ${order.status === 'new' ? '🆕 NEW' : '✅ PROCESSED'}
+                        </span>
+                    </div>
+                </div>
+            `).join('');
+        }
+        
+        // Prepend new order to recent orders
+        function prependToRecentOrders(order) {
+            const container = document.getElementById('recentOrders');
+            const orderHtml = `
+                <div class="order-item new" style="animation: slideIn 0.5s ease;">
+                    <div>
+                        <strong>#${order.id.slice(-8)}</strong> - ${order.customer_name}
+                        <br><small>💰 ${order.total_amount}₽ • 📱 ${order.contact_method}</small>
+                    </div>
+                    <div>
+                        <span style="background: #FF5722; padding: 4px 8px; border-radius: 12px; color: white; font-size: 12px;">
+                            🆕 NEW
+                        </span>
+                    </div>
+                </div>
+            `;
+            
+            if (container.innerHTML.includes('No recent orders')) {
+                container.innerHTML = orderHtml;
+            } else {
+                container.insertAdjacentHTML('afterbegin', orderHtml);
+            }
+        }
+        
+        // Test notification
+        function testNotification() {
+            showNotification('🔔 Test Notification', 'System working perfectly!');
+            playOrderSound();
+        }
+        
+        // Refresh all data
+        function refreshAll() {
             loadDashboard();
-            alert('Stats refreshed!');
+            showNotification('🔄 Refreshed', 'Dashboard updated successfully!');
         }
         
-        // Load on page load
+        // Send broadcast (placeholder)
+        function sendBroadcast() {
+            showNotification('📢 Broadcast', 'Feature coming soon!');
+        }
+        
+        // Export data (placeholder)
+        function exportData() {
+            showNotification('📊 Export', 'Preparing data export...');
+        }
+        
+        // Logout handler
+        document.getElementById('logoutBtn').addEventListener('click', (e) => {
+            e.preventDefault();
+            
+            fetch('/api/logout', { method: 'POST', credentials: 'include' })
+                .then(() => {
+                    localStorage.removeItem('admin_logged_in');
+                    localStorage.removeItem('admin_username');
+                    window.location.href = '/admin/login';
+                });
+        });
+        
+        // Page initialization
         window.addEventListener('DOMContentLoaded', () => {
             if (checkAuth()) {
+                // Request notification permission
+                if ('Notification' in window && Notification.permission === 'default') {
+                    Notification.requestPermission();
+                }
+                
+                // Initialize WebSocket
+                initWebSocket();
+                
+                // Load initial data
                 loadDashboard();
+                
+                // Set up periodic refresh
+                setInterval(loadDashboard, 30000); // Every 30 seconds
             }
         });
+        
+        // Update response time simulation
+        setInterval(() => {
+            const responseTime = Math.floor(Math.random() * 100) + 50;
+            document.getElementById('responseTime').textContent = responseTime + 'ms';
+        }, 5000);
     </script>
 </body>
 </html>
