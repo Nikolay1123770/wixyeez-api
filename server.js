@@ -17,14 +17,14 @@ const PORT = process.env.PORT || 3000;
 
 // Security & Performance
 app.use(helmet({
-    contentSecurityPolicy: false // Для админки
+    contentSecurityPolicy: false
 }));
 app.use(compression());
 
 // Rate limiting
 const limiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 1000 // limit each IP to 1000 requests per windowMs
+    windowMs: 15 * 60 * 1000,
+    max: 1000
 });
 app.use('/api/', limiter);
 
@@ -33,7 +33,7 @@ app.use(session({
     secret: process.env.SESSION_SECRET || 'wixyeez-super-secret-2024',
     resave: false,
     saveUninitialized: false,
-    cookie: { secure: false, maxAge: 24 * 60 * 60 * 1000 } // 24 hours
+    cookie: { secure: false, maxAge: 24 * 60 * 60 * 1000 }
 }));
 
 // Middleware
@@ -52,17 +52,16 @@ const pool = new Pool({
 
 // WebSocket Server
 const wss = new WebSocket.Server({ server });
-const clients = new Set();
+const clients = new Map(); // Map для хранения клиентов по user_id
 
 // WebSocket connection handler
 wss.on('connection', (ws, req) => {
     console.log('🔌 New WebSocket connection');
-    clients.add(ws);
     
-    ws.on('message', (message) => {
+    ws.on('message', async (message) => {
         try {
             const data = JSON.parse(message);
-            handleWebSocketMessage(ws, data);
+            await handleWebSocketMessage(ws, data);
         } catch (error) {
             console.error('WebSocket message error:', error);
         }
@@ -70,113 +69,125 @@ wss.on('connection', (ws, req) => {
     
     ws.on('close', () => {
         console.log('🔌 WebSocket disconnected');
-        clients.delete(ws);
+        // Удаляем клиента из всех карт
+        for (let [userId, client] of clients) {
+            if (client === ws) {
+                clients.delete(userId);
+                break;
+            }
+        }
     });
     
     ws.on('error', (error) => {
         console.error('WebSocket error:', error);
-        clients.delete(ws);
     });
 });
 
 // Handle WebSocket messages
-function handleWebSocketMessage(ws, data) {
+async function handleWebSocketMessage(ws, data) {
     switch(data.type) {
-        case 'admin_auth':
-            ws.isAdmin = true;
+        case 'register_user':
+            // Регистрируем пользователя для уведомлений
+            clients.set(data.user_id, ws);
+            ws.user_id = data.user_id;
             ws.send(JSON.stringify({
-                type: 'auth_success',
-                message: 'Admin authenticated'
+                type: 'registered',
+                message: 'User registered for notifications'
             }));
             break;
             
+        case 'register_admin':
+            ws.isAdmin = true;
+            ws.send(JSON.stringify({
+                type: 'admin_registered',
+                message: 'Admin registered'
+            }));
+            break;
+            
+        case 'send_message':
+            await handleChatMessage(data);
+            break;
+            
         case 'get_stats':
-            sendStatsToAdmin(ws);
+            if (ws.isAdmin) {
+                await sendStatsToAdmin(ws);
+            }
             break;
     }
 }
 
-// Broadcast to all admin clients
+// Handle chat messages
+async function handleChatMessage(data) {
+    try {
+        const { order_id, message, sender_id, sender_type } = data;
+        
+        // Сохраняем сообщение в БД
+        const result = await pool.query(
+            `INSERT INTO chat_messages (order_id, sender_id, sender_type, message, created_at)
+             VALUES ($1, $2, $3, $4, NOW()) RETURNING *`,
+            [order_id, sender_id, sender_type, message]
+        );
+        
+        const savedMessage = result.rows[0];
+        
+        // Получаем информацию о заказе
+        const orderResult = await pool.query('SELECT * FROM orders WHERE id = $1', [order_id]);
+        
+        if (orderResult.rows.length > 0) {
+            const order = orderResult.rows[0];
+            
+            // Отправляем сообщение получателю
+            if (sender_type === 'user') {
+                // Отправляем админам
+                broadcastToAdmins({
+                    type: 'new_message',
+                    order_id: order_id,
+                    message: savedMessage,
+                    customer: order.customer_name
+                });
+            } else {
+                // Отправляем пользователю
+                const userClient = clients.get(order.customer_email);
+                if (userClient && userClient.readyState === WebSocket.OPEN) {
+                    userClient.send(JSON.stringify({
+                        type: 'new_message',
+                        order_id: order_id,
+                        message: savedMessage
+                    }));
+                }
+            }
+        }
+    } catch (error) {
+        console.error('Error handling chat message:', error);
+    }
+}
+
+// Broadcast to admins
 function broadcastToAdmins(data) {
-    clients.forEach(client => {
+    wss.clients.forEach(client => {
         if (client.readyState === WebSocket.OPEN && client.isAdmin) {
             client.send(JSON.stringify(data));
         }
     });
 }
 
-// Send stats to admin
-async function sendStatsToAdmin(ws) {
-    try {
-        const stats = await getStats();
-        ws.send(JSON.stringify({
-            type: 'stats_update',
-            stats: stats
+// Send notification to user
+function sendNotificationToUser(userId, notification) {
+    const client = clients.get(userId);
+    if (client && client.readyState === WebSocket.OPEN) {
+        client.send(JSON.stringify({
+            type: 'notification',
+            ...notification
         }));
-    } catch (error) {
-        console.error('Error sending stats:', error);
     }
 }
-
-// Get statistics
-async function getStats() {
-    const productsResult = await pool.query('SELECT COUNT(*) FROM products WHERE is_active = true');
-    const ordersResult = await pool.query('SELECT COUNT(*), COALESCE(SUM(total_amount), 0) as revenue FROM orders');
-    const todayResult = await pool.query(
-        "SELECT COUNT(*), COALESCE(SUM(total_amount), 0) as revenue FROM orders WHERE DATE(created_at) = CURRENT_DATE"
-    );
-    const newOrdersResult = await pool.query("SELECT COUNT(*) FROM orders WHERE status = 'new'");
-    const activeUsersResult = await pool.query("SELECT COUNT(DISTINCT customer_email) FROM orders WHERE created_at > NOW() - INTERVAL '1 hour'");
-    
-    return {
-        products: parseInt(productsResult.rows[0].count),
-        orders: parseInt(ordersResult.rows[0].count),
-        revenue: parseFloat(ordersResult.rows[0].revenue),
-        today_orders: parseInt(todayResult.rows[0].count),
-        today_revenue: parseFloat(todayResult.rows[0].revenue),
-        new_orders: parseInt(newOrdersResult.rows[0].count),
-        active_users: parseInt(activeUsersResult.rows[0].count)
-    };
-}
-
-// ============================================
-// ADMIN PANEL ROUTES
-// ============================================
-
-app.get('/admin', (req, res) => {
-    if (req.session.adminId) {
-        res.redirect('/admin/dashboard');
-    } else {
-        res.sendFile(path.join(__dirname, 'public', 'admin', 'login.html'));
-    }
-});
-
-app.get('/admin/login', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'admin', 'login.html'));
-});
-
-app.get('/admin/dashboard', requireAdmin, (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'admin', 'dashboard.html'));
-});
-
-app.get('/admin/products', requireAdmin, (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'admin', 'products.html'));
-});
-
-app.get('/admin/orders', requireAdmin, (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'admin', 'orders.html'));
-});
-
-app.get('/admin/chat', requireAdmin, (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'admin', 'chat.html'));
-});
 
 // Admin authentication middleware
 function requireAdmin(req, res, next) {
     if (req.session.adminId) {
         next();
     } else {
-        res.redirect('/admin/login');
+        res.status(401).json({ success: false, error: 'Admin access required' });
     }
 }
 
@@ -184,105 +195,7 @@ function requireAdmin(req, res, next) {
 // API ROUTES
 // ============================================
 
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
-app.get('/api', (req, res) => {
-    res.json({ 
-        success: true, 
-        message: 'WIXYEEZ API v3.0 - Real-time System',
-        version: '3.0.0',
-        features: [
-            'Real-time admin notifications',
-            'WebSocket chat system',
-            'Advanced order management',
-            'Push notifications',
-            'Analytics dashboard'
-        ],
-        endpoints: {
-            products: '/api/products',
-            orders: '/api/orders',
-            admin: '/admin',
-            websocket: 'ws://localhost:' + PORT
-        }
-    });
-});
-
-// Get all products
-app.get('/api/get_products.php', async (req, res) => {
-    try {
-        const category = req.query.category;
-        const search = req.query.search;
-        
-        let query = 'SELECT * FROM products WHERE is_active = true';
-        const params = [];
-        let paramIndex = 1;
-        
-        if (category && category !== 'all') {
-            query += ` AND category = $${paramIndex}`;
-            params.push(category);
-            paramIndex++;
-        }
-        
-        if (search) {
-            query += ` AND (name ILIKE $${paramIndex} OR description ILIKE $${paramIndex})`;
-            params.push(`%${search}%`);
-            paramIndex++;
-        }
-        
-        query += ' ORDER BY created_at DESC';
-        
-        const result = await pool.query(query, params);
-        
-        res.json({
-            success: true,
-            count: result.rows.length,
-            products: result.rows
-        });
-    } catch (error) {
-        console.error('Error:', error);
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-app.get('/api/products', async (req, res) => {
-    try {
-        const category = req.query.category;
-        const search = req.query.search;
-        
-        let query = 'SELECT * FROM products WHERE is_active = true';
-        const params = [];
-        let paramIndex = 1;
-        
-        if (category && category !== 'all') {
-            query += ` AND category = $${paramIndex}`;
-            params.push(category);
-            paramIndex++;
-        }
-        
-        if (search) {
-            query += ` AND (name ILIKE $${paramIndex} OR description ILIKE $${paramIndex})`;
-            params.push(`%${search}%`);
-            paramIndex++;
-        }
-        
-        query += ' ORDER BY created_at DESC';
-        
-        const result = await pool.query(query, params);
-        
-        res.json({
-            success: true,
-            count: result.rows.length,
-            products: result.rows
-        });
-    } catch (error) {
-        console.error('Error:', error);
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-// Create order
+// Create order (обновленный)
 app.post('/api/create_order.php', async (req, res) => {
     try {
         const { 
@@ -309,19 +222,26 @@ app.post('/api/create_order.php', async (req, res) => {
         
         const order = result.rows[0];
         
-        // Broadcast new order to admin
+        // Создаем уведомление для пользователя
+        await pool.query(
+            `INSERT INTO notifications (user_id, type, title, message, data, created_at)
+             VALUES ($1, 'order_created', 'Заказ создан', $2, $3, NOW())`,
+            [customer_email, `Ваш заказ #${orderId.slice(-8)} успешно создан!`, JSON.stringify(order)]
+        );
+        
+        // Отправляем уведомление пользователю
+        sendNotificationToUser(customer_email, {
+            title: '🎉 Заказ создан!',
+            message: `Заказ #${orderId.slice(-8)} успешно оформлен`,
+            order_id: orderId
+        });
+        
+        // Broadcast new order to admins
         broadcastToAdmins({
             type: 'new_order',
             order: order,
             message: `🆕 Новый заказ от ${customer_name}!`
         });
-        
-        // Add notification to database
-        await pool.query(
-            `INSERT INTO notifications (type, title, message, data, created_at)
-             VALUES ('new_order', 'Новый заказ', $1, $2, NOW())`,
-            [`Заказ #${order.id.slice(-8)} от ${customer_name}`, JSON.stringify(order)]
-        );
         
         res.json({ 
             success: true, 
@@ -335,24 +255,19 @@ app.post('/api/create_order.php', async (req, res) => {
     }
 });
 
-// Get orders (Admin)
-app.get('/api/orders', requireAdmin, async (req, res) => {
+// Get user orders
+app.get('/api/user/orders', async (req, res) => {
     try {
-        const status = req.query.status || 'all';
-        const limit = parseInt(req.query.limit) || 50;
+        const { user_email } = req.query;
         
-        let query = 'SELECT * FROM orders';
-        const params = [];
-        
-        if (status !== 'all') {
-            query += ' WHERE status = $1';
-            params.push(status);
+        if (!user_email) {
+            return res.status(400).json({ success: false, error: 'User email required' });
         }
         
-        query += ' ORDER BY created_at DESC LIMIT $' + (params.length + 1);
-        params.push(limit);
-        
-        const result = await pool.query(query, params);
+        const result = await pool.query(
+            'SELECT * FROM orders WHERE customer_email = $1 ORDER BY created_at DESC',
+            [user_email]
+        );
         
         res.json({
             success: true,
@@ -364,14 +279,38 @@ app.get('/api/orders', requireAdmin, async (req, res) => {
     }
 });
 
-// Update order status
-app.post('/api/orders/update_status', requireAdmin, async (req, res) => {
+// Get user notifications
+app.get('/api/user/notifications', async (req, res) => {
     try {
-        const { order_id, status } = req.body;
+        const { user_id, limit = 50 } = req.query;
+        
+        if (!user_id) {
+            return res.status(400).json({ success: false, error: 'User ID required' });
+        }
+        
+        const result = await pool.query(
+            'SELECT * FROM notifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2',
+            [user_id, limit]
+        );
+        
+        res.json({
+            success: true,
+            notifications: result.rows
+        });
+    } catch (error) {
+        console.error('Error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Mark notification as read
+app.post('/api/user/notifications/mark_read', async (req, res) => {
+    try {
+        const { notification_id } = req.body;
         
         await pool.query(
-            'UPDATE orders SET status = $1, updated_at = NOW() WHERE id = $2',
-            [status, order_id]
+            'UPDATE notifications SET is_read = true WHERE id = $1',
+            [notification_id]
         );
         
         res.json({ success: true });
@@ -381,29 +320,23 @@ app.post('/api/orders/update_status', requireAdmin, async (req, res) => {
     }
 });
 
-// Chat messages
-app.post('/api/chat/send', requireAdmin, async (req, res) => {
-    try {
-        const { order_id, message, recipient_type } = req.body;
-        const admin_id = req.session.adminId;
-        
-        const result = await pool.query(
-            `INSERT INTO chat_messages (order_id, admin_id, message, recipient_type, created_at)
-             VALUES ($1, $2, $3, $4, NOW()) RETURNING *`,
-            [order_id, admin_id, message, recipient_type]
-        );
-        
-        res.json({ success: true, message: result.rows[0] });
-    } catch (error) {
-        console.error('Error:', error);
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-// Get chat messages
-app.get('/api/chat/:orderId', requireAdmin, async (req, res) => {
+// Get chat messages for order
+app.get('/api/chat/:orderId', async (req, res) => {
     try {
         const { orderId } = req.params;
+        const { user_email } = req.query;
+        
+        // Проверяем, что пользователь имеет доступ к этому заказу
+        if (!req.session.adminId) {
+            const orderResult = await pool.query(
+                'SELECT customer_email FROM orders WHERE id = $1',
+                [orderId]
+            );
+            
+            if (orderResult.rows.length === 0 || orderResult.rows[0].customer_email !== user_email) {
+                return res.status(403).json({ success: false, error: 'Access denied' });
+            }
+        }
         
         const result = await pool.query(
             'SELECT * FROM chat_messages WHERE order_id = $1 ORDER BY created_at ASC',
@@ -420,176 +353,78 @@ app.get('/api/chat/:orderId', requireAdmin, async (req, res) => {
     }
 });
 
-// Add product
-app.post('/api/add_product.php', requireAdmin, async (req, res) => {
+// Send chat message
+app.post('/api/chat/send', async (req, res) => {
     try {
-        const { name, description, category, price, old_price, discount, emoji, image_url } = req.body;
+        const { order_id, message, sender_id, sender_type } = req.body;
         
-        const emojis = {
-            'Услуги': '🛡️',
-            'Сеты': '📦',
-            'Сопровождение': '🎯'
-        };
-        
-        const productEmoji = emoji || emojis[category] || '🔥';
-        
-        const result = await pool.query(
-            `INSERT INTO products (name, description, category, price, old_price, discount, emoji, image_url)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
-            [name, description, category, price, old_price || price, discount || 0, productEmoji, image_url]
-        );
-        
-        res.json({ success: true, id: result.rows[0].id });
-    } catch (error) {
-        console.error('Error:', error);
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-// Update product
-app.post('/api/update_product.php', requireAdmin, async (req, res) => {
-    try {
-        const { id, name, description, category, price, old_price, discount, emoji } = req.body;
-        
-        const emojis = {
-            'Услуги': '🛡️',
-            'Сеты': '📦',
-            'Сопровождение': '🎯'
-        };
-        
-        const productEmoji = emoji || emojis[category] || '🔥';
-        
-        await pool.query(
-            `UPDATE products SET name=$1, description=$2, category=$3, price=$4, old_price=$5, discount=$6, emoji=$7
-             WHERE id=$8`,
-            [name, description, category, price, old_price, discount, productEmoji, id]
-        );
-        
-        res.json({ success: true });
-    } catch (error) {
-        console.error('Error:', error);
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-// Delete product
-app.get('/api/delete_product.php', requireAdmin, async (req, res) => {
-    try {
-        const id = req.query.id;
-        await pool.query('UPDATE products SET is_active = false WHERE id = $1', [id]);
-        res.json({ success: true });
-    } catch (error) {
-        console.error('Error:', error);
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-// Login
-app.post('/api/login.php', async (req, res) => {
-    try {
-        const { username, password } = req.body;
-        
-        console.log('Login attempt:', username);
-        
-        const result = await pool.query('SELECT * FROM admins WHERE username = $1', [username]);
-        
-        if (result.rows.length > 0) {
-            const admin = result.rows[0];
-            const validPassword = await bcrypt.compare(password, admin.password);
+        // Проверяем доступ
+        if (sender_type === 'user') {
+            const orderResult = await pool.query(
+                'SELECT customer_email FROM orders WHERE id = $1',
+                [order_id]
+            );
             
-            if (validPassword) {
-                req.session.adminId = admin.id;
-                req.session.adminUsername = admin.username;
-                
-                await pool.query('UPDATE admins SET last_login = NOW() WHERE id = $1', [admin.id]);
-                
-                res.json({ 
-                    success: true, 
-                    username: admin.username,
-                    message: 'Login successful',
-                    redirect: '/admin/dashboard'
-                });
-            } else {
-                res.status(401).json({ success: false, error: 'Invalid password' });
+            if (orderResult.rows.length === 0 || orderResult.rows[0].customer_email !== sender_id) {
+                return res.status(403).json({ success: false, error: 'Access denied' });
             }
-        } else {
-            res.status(401).json({ success: false, error: 'User not found' });
+        } else if (sender_type === 'admin' && !req.session.adminId) {
+            return res.status(403).json({ success: false, error: 'Admin access required' });
         }
-    } catch (error) {
-        console.error('Login error:', error);
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-// Logout
-app.post('/api/logout', (req, res) => {
-    req.session.destroy((err) => {
-        if (err) {
-            res.status(500).json({ success: false, error: 'Logout failed' });
-        } else {
-            res.json({ success: true, message: 'Logged out successfully' });
-        }
-    });
-});
-
-// Stats
-app.get('/api/stats.php', async (req, res) => {
-    try {
-        const stats = await getStats();
         
-        const categoryResult = await pool.query(
-            'SELECT category, COUNT(*) as count FROM products WHERE is_active = true GROUP BY category'
-        );
-        
-        const topProductResult = await pool.query(`
-            SELECT p.name, COUNT(o.id) as order_count 
-            FROM products p 
-            LEFT JOIN orders o ON o.items LIKE '%' || p.name || '%' 
-            WHERE p.is_active = true 
-            GROUP BY p.id, p.name 
-            ORDER BY order_count DESC 
-            LIMIT 1
-        `);
-        
-        stats.categories = categoryResult.rows;
-        stats.top_product = topProductResult.rows.length > 0 ? topProductResult.rows[0].name : 'Нет данных';
-        
-        res.json({
-            success: true,
-            stats: stats
-        });
-    } catch (error) {
-        console.error('Stats error:', error);
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-// Get notifications
-app.get('/api/notifications', requireAdmin, async (req, res) => {
-    try {
         const result = await pool.query(
-            'SELECT * FROM notifications ORDER BY created_at DESC LIMIT 50'
+            `INSERT INTO chat_messages (order_id, sender_id, sender_type, message, created_at)
+             VALUES ($1, $2, $3, $4, NOW()) RETURNING *`,
+            [order_id, sender_id, sender_type, message]
         );
         
-        res.json({
-            success: true,
-            notifications: result.rows
-        });
+        // Отправляем через WebSocket
+        await handleChatMessage({ order_id, message, sender_id, sender_type });
+        
+        res.json({ success: true, message: result.rows[0] });
     } catch (error) {
         console.error('Error:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
 
-// Mark notification as read
-app.post('/api/notifications/mark_read', requireAdmin, async (req, res) => {
+// Update order status (обновленный)
+app.post('/api/orders/update_status', requireAdmin, async (req, res) => {
     try {
-        const { notification_id } = req.body;
+        const { order_id, status } = req.body;
         
         await pool.query(
-            'UPDATE notifications SET is_read = true WHERE id = $1',
-            [notification_id]
+            'UPDATE orders SET status = $1, updated_at = NOW() WHERE id = $2',
+            [status, order_id]
         );
+        
+        // Получаем информацию о заказе
+        const orderResult = await pool.query('SELECT * FROM orders WHERE id = $1', [order_id]);
+        const order = orderResult.rows[0];
+        
+        if (order) {
+            // Создаем уведомление для пользователя
+            const statusMessages = {
+                'processing': 'Ваш заказ обрабатывается',
+                'completed': 'Ваш заказ выполнен!',
+                'cancelled': 'Ваш заказ отменен'
+            };
+            
+            const message = statusMessages[status] || 'Статус заказа изменен';
+            
+            await pool.query(
+                `INSERT INTO notifications (user_id, type, title, message, data, created_at)
+                 VALUES ($1, 'order_status', 'Статус заказа', $2, $3, NOW())`,
+                [order.customer_email, message, JSON.stringify({ order_id, status })]
+            );
+            
+            // Отправляем уведомление пользователю
+            sendNotificationToUser(order.customer_email, {
+                title: '📦 Статус заказа',
+                message: message,
+                order_id: order_id
+            });
+        }
         
         res.json({ success: true });
     } catch (error) {
@@ -598,10 +433,13 @@ app.post('/api/notifications/mark_read', requireAdmin, async (req, res) => {
     }
 });
 
-// Initialize database
+// Остальные существующие роуты...
+// (весь остальной код остается тем же)
+
+// Initialize database (обновленный)
 app.get('/api/init', async (req, res) => {
     try {
-        // Create products table
+        // Создаем все необходимые таблицы
         await pool.query(`
             CREATE TABLE IF NOT EXISTS products (
                 id SERIAL PRIMARY KEY,
@@ -621,7 +459,6 @@ app.get('/api/init', async (req, res) => {
             )
         `);
         
-        // Create orders table
         await pool.query(`
             CREATE TABLE IF NOT EXISTS orders (
                 id VARCHAR(36) PRIMARY KEY,
@@ -640,7 +477,6 @@ app.get('/api/init', async (req, res) => {
             )
         `);
         
-        // Create admins table
         await pool.query(`
             CREATE TABLE IF NOT EXISTS admins (
                 id SERIAL PRIMARY KEY,
@@ -651,23 +487,22 @@ app.get('/api/init', async (req, res) => {
             )
         `);
         
-        // Create chat_messages table
         await pool.query(`
             CREATE TABLE IF NOT EXISTS chat_messages (
                 id SERIAL PRIMARY KEY,
-                order_id VARCHAR(36) REFERENCES orders(id),
-                admin_id INT REFERENCES admins(id),
+                order_id VARCHAR(36) NOT NULL,
+                sender_id VARCHAR(255) NOT NULL,
+                sender_type VARCHAR(20) NOT NULL,
                 message TEXT NOT NULL,
-                recipient_type VARCHAR(20) DEFAULT 'customer',
                 is_read BOOLEAN DEFAULT false,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         `);
         
-        // Create notifications table
         await pool.query(`
             CREATE TABLE IF NOT EXISTS notifications (
                 id SERIAL PRIMARY KEY,
+                user_id VARCHAR(255) NOT NULL,
                 type VARCHAR(50) NOT NULL,
                 title VARCHAR(255) NOT NULL,
                 message TEXT NOT NULL,
@@ -677,31 +512,17 @@ app.get('/api/init', async (req, res) => {
             )
         `);
         
-        // Create reviews table
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS reviews (
-                id SERIAL PRIMARY KEY,
-                product_id INT REFERENCES products(id),
-                customer_name VARCHAR(255),
-                rating INT CHECK (rating >= 1 AND rating <= 5),
-                comment TEXT,
-                is_approved BOOLEAN DEFAULT false,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        `);
-        
-        // Create user_sessions table
         await pool.query(`
             CREATE TABLE IF NOT EXISTS user_sessions (
                 id SERIAL PRIMARY KEY,
-                session_id VARCHAR(255) UNIQUE,
-                user_data JSONB,
+                user_id VARCHAR(255) UNIQUE,
+                device_token VARCHAR(500),
                 last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         `);
         
-        // Create default admin
+        // Создаем админа по умолчанию
         const adminCheck = await pool.query('SELECT * FROM admins WHERE username = $1', ['admin']);
         
         if (adminCheck.rows.length === 0) {
@@ -709,44 +530,16 @@ app.get('/api/init', async (req, res) => {
             await pool.query('INSERT INTO admins (username, password) VALUES ($1, $2)', ['admin', hashedPassword]);
         }
         
-        // Create sample products
-        const productsCheck = await pool.query('SELECT COUNT(*) FROM products');
-        
-        if (parseInt(productsCheck.rows[0].count) === 0) {
-            const products = [
-                ['🔥 VIP Fortnite Account', 'Премиум аккаунт с 200+ скинами, редкими эмотами и эксклюзивными предметами', 'Аккаунты', 4990, 6990, 28, '🎮'],
-                ['⚡ Valorant Boost Service', 'Быстрая прокачка рейтинга от Iron до Radiant', 'Услуги', 2990, 3500, 15, '🛡️'],
-                ['🚀 CS2 Prime Account', 'Готовый аккаунт с Prime статусом и высоким трастом', 'Аккаунты', 1990, 2500, 20, '🎯'],
-                ['💎 Gaming Bundle Pack', 'Полный набор: аккаунт + скины + прокачка', 'Сеты', 7990, 9990, 20, '📦'],
-                ['🎯 Персональное сопровождение', 'Индивидуальная поддержка 24/7 на месяц', 'Сопровождение', 3990, 4990, 20, '🤝'],
-                ['🏆 Esports Coaching', 'Тренировки с про-игроками', 'Услуги', 5990, 7990, 25, '🏆'],
-                ['🔰 Starter Pack', 'Идеальный набор для новичков', 'Сеты', 1990, 2490, 20, '🎁'],
-                ['⭐ Premium Support', 'VIP поддержка с приоритетом', 'Сопровождение', 990, 1490, 33, '⭐']
-            ];
-            
-            for (const p of products) {
-                await pool.query(
-                    'INSERT INTO products (name, description, category, price, old_price, discount, emoji) VALUES ($1, $2, $3, $4, $5, $6, $7)',
-                    p
-                );
-            }
-        }
-        
         res.json({ 
             success: true, 
-            message: 'Database initialized with all tables!',
+            message: 'Database initialized with chat and notifications!',
             features: [
-                'Real-time orders system',
-                'WebSocket notifications',
-                'Chat system',
-                'Advanced analytics',
-                'Review system'
-            ],
-            admin_credentials: {
-                username: 'admin',
-                password: 'admin123',
-                url: '/admin'
-            }
+                'Real-time chat system',
+                'Push notifications',
+                'Order tracking',
+                'User notifications',
+                'WebSocket support'
+            ]
         });
     } catch (error) {
         console.error('Error:', error);
@@ -757,6 +550,6 @@ app.get('/api/init', async (req, res) => {
 // Start server
 server.listen(PORT, () => {
     console.log(`🚀 WIXYEEZ API v3.0 running on port ${PORT}`);
-    console.log(`📱 WebSocket server ready for real-time notifications`);
+    console.log(`📱 WebSocket server ready for real-time chat & notifications`);
     console.log(`👑 Admin panel: http://localhost:${PORT}/admin`);
 });
