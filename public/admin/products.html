@@ -59,7 +59,7 @@
             
             <!-- Products Grid -->
             <div class="products-grid" id="productsGrid">
-                <!-- Products will be loaded here -->
+                <p>Loading products...</p>
             </div>
         </main>
     </div>
@@ -126,11 +126,226 @@
         </div>
     </div>
     
-    <script src="admin.js"></script>
     <script>
+        let allProducts = [];
+        
+        // Check auth
+        function checkAuth() {
+            const isLoggedIn = localStorage.getItem('admin_logged_in');
+            if (!isLoggedIn) {
+                window.location.href = '/admin/login';
+                return false;
+            }
+            return true;
+        }
+        
+        // Logout
+        document.getElementById('logoutBtn').addEventListener('click', (e) => {
+            e.preventDefault();
+            localStorage.removeItem('admin_logged_in');
+            localStorage.removeItem('admin_username');
+            window.location.href = '/admin/login';
+        });
+        
+        // Load products
+        async function loadProducts(category = 'all') {
+            if (!checkAuth()) return;
+            
+            const grid = document.getElementById('productsGrid');
+            grid.innerHTML = '<p>Loading products...</p>';
+            
+            try {
+                const url = category === 'all' 
+                    ? '/api/products'
+                    : `/api/products?category=${encodeURIComponent(category)}`;
+                    
+                const response = await fetch(url, { credentials: 'include' });
+                
+                if (response.status === 401) {
+                    localStorage.removeItem('admin_logged_in');
+                    window.location.href = '/admin/login';
+                    return;
+                }
+                
+                const data = await response.json();
+                
+                if (data.success && data.products.length > 0) {
+                    allProducts = data.products;
+                    displayProducts(data.products);
+                } else {
+                    grid.innerHTML = '<p>No products found</p>';
+                }
+            } catch (error) {
+                console.error('Failed to load products:', error);
+                grid.innerHTML = '<p>Error loading products</p>';
+            }
+        }
+        
+        function displayProducts(products) {
+            const grid = document.getElementById('productsGrid');
+            
+            grid.innerHTML = products.map(product => `
+                <div class="product-card">
+                    <div class="product-header">
+                        <span class="product-category">${product.emoji} ${product.category}</span>
+                        <h3 class="product-name">${escapeHtml(product.name)}</h3>
+                        <p class="product-desc">${escapeHtml(product.description || '')}</p>
+                    </div>
+                    <div class="product-body">
+                        <div class="product-price">
+                            ${product.price}₽
+                            ${product.old_price > product.price ? 
+                                `<span class="product-old-price">${product.old_price}₽</span>` : ''}
+                            ${product.discount > 0 ? 
+                                `<span class="product-discount">-${product.discount}%</span>` : ''}
+                        </div>
+                        <div class="product-actions">
+                            <button class="btn-edit" onclick="editProduct(${product.id})">Edit</button>
+                            <button class="btn-delete" onclick="deleteProduct(${product.id}, '${escapeHtml(product.name)}')">Delete</button>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        }
+        
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+        
+        // Filter products
+        function filterProducts() {
+            const category = document.getElementById('categoryFilter').value;
+            loadProducts(category);
+        }
+        
+        // Search products
+        let searchTimeout;
+        function searchProducts() {
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(() => {
+                const query = document.getElementById('searchInput').value.toLowerCase();
+                
+                if (!query) {
+                    displayProducts(allProducts);
+                    return;
+                }
+                
+                const filtered = allProducts.filter(p => 
+                    p.name.toLowerCase().includes(query) ||
+                    (p.description && p.description.toLowerCase().includes(query)) ||
+                    p.category.toLowerCase().includes(query)
+                );
+                
+                displayProducts(filtered);
+            }, 300);
+        }
+        
+        // Show add product modal
+        function showAddProductModal() {
+            document.getElementById('modalTitle').textContent = 'Add Product';
+            document.getElementById('productForm').reset();
+            document.getElementById('productId').value = '';
+            document.getElementById('productModal').classList.add('active');
+        }
+        
+        // Edit product
+        async function editProduct(id) {
+            const product = allProducts.find(p => p.id === id);
+            if (product) {
+                document.getElementById('modalTitle').textContent = 'Edit Product';
+                document.getElementById('productId').value = product.id;
+                document.getElementById('productName').value = product.name;
+                document.getElementById('productDesc').value = product.description || '';
+                document.getElementById('productCategory').value = product.category;
+                document.getElementById('productPrice').value = product.price;
+                document.getElementById('productOldPrice').value = product.old_price || '';
+                document.getElementById('productDiscount').value = product.discount || '';
+                document.getElementById('productImage').value = product.image_url || '';
+                
+                document.getElementById('productModal').classList.add('active');
+            }
+        }
+        
+        // Delete product
+        async function deleteProduct(id, name) {
+            if (!confirm(`Delete product "${name}"?`)) return;
+            
+            try {
+                const response = await fetch(`/api/delete_product.php?id=${id}`, {
+                    credentials: 'include'
+                });
+                const data = await response.json();
+                
+                if (data.success) {
+                    alert('Product deleted successfully!');
+                    loadProducts();
+                } else {
+                    alert('Failed to delete product');
+                }
+            } catch (error) {
+                console.error('Failed to delete product:', error);
+                alert('Error deleting product');
+            }
+        }
+        
+        // Close modal
+        function closeModal() {
+            document.getElementById('productModal').classList.remove('active');
+        }
+        
+        // Product form submission
+        document.getElementById('productForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const productId = document.getElementById('productId').value;
+            const productData = {
+                name: document.getElementById('productName').value,
+                description: document.getElementById('productDesc').value,
+                category: document.getElementById('productCategory').value,
+                price: parseFloat(document.getElementById('productPrice').value),
+                old_price: parseFloat(document.getElementById('productOldPrice').value) || null,
+                discount: parseInt(document.getElementById('productDiscount').value) || 0,
+                image_url: document.getElementById('productImage').value || null
+            };
+            
+            if (productId) {
+                productData.id = parseInt(productId);
+            }
+            
+            try {
+                const url = productId 
+                    ? '/api/update_product.php'
+                    : '/api/add_product.php';
+                    
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify(productData)
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    alert(productId ? 'Product updated!' : 'Product added!');
+                    closeModal();
+                    loadProducts();
+                } else {
+                    alert('Error: ' + (data.error || 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('Failed to save product:', error);
+                alert('Error saving product');
+            }
+        });
+        
         // Load products on page load
         window.addEventListener('DOMContentLoaded', () => {
-            loadProducts();
+            if (checkAuth()) {
+                loadProducts();
+            }
         });
     </script>
 </body>
