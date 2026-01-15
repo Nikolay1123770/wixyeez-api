@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WIXYEEZ Admin Dashboard</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="admin-wrapper">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <span class="logo-icon">👑</span>
+                    <div>
+                        <h2>WIXYEEZ</h2>
+                        <span>Admin Panel</span>
+                    </div>
+                </div>
+            </div>
+            
+            <nav class="sidebar-nav">
+                <a href="/admin/dashboard" class="nav-item active">
+                    <span class="nav-icon">📊</span>
+                    Dashboard
+                </a>
+                <a href="/admin/products" class="nav-item">
+                    <span class="nav-icon">📦</span>
+                    Products
+                </a>
+                <a href="#" class="nav-item" id="logoutBtn">
+                    <span class="nav-icon">🚪</span>
+                    Logout
+                </a>
+            </nav>
+        </aside>
+        
+        <!-- Main Content -->
+        <main class="main-content">
+            <header class="main-header">
+                <h1>Dashboard</h1>
+                <div class="header-user">
+                    <span id="adminUsername">Admin</span>
+                </div>
+            </header>
+            
+            <!-- Stats Grid -->
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-icon">📦</div>
+                    <div class="stat-value" id="totalProducts">0</div>
+                    <div class="stat-label">Total Products</div>
+                </div>
+                
+                <div class="stat-card">
+                    <div class="stat-icon">🛒</div>
+                    <div class="stat-value" id="totalOrders">0</div>
+                    <div class="stat-label">Total Orders</div>
+                </div>
+                
+                <div class="stat-card">
+                    <div class="stat-icon">💰</div>
+                    <div class="stat-value" id="totalRevenue">0₽</div>
+                    <div class="stat-label">Total Revenue</div>
+                </div>
+                
+                <div class="stat-card">
+                    <div class="stat-icon">📈</div>
+                    <div class="stat-value" id="todayOrders">0</div>
+                    <div class="stat-label">Today's Orders</div>
+                </div>
+            </div>
+            
+            <!-- Quick Actions -->
+            <div class="section-card">
+                <h2>Quick Actions</h2>
+                <div class="quick-actions">
+                    <a href="/admin/products" class="action-btn">
+                        <span>➕</span> Add Product
+                    </a>
+                    <button class="action-btn" onclick="refreshStats()">
+                        <span>🔄</span> Refresh Stats
+                    </button>
+                </div>
+            </div>
+            
+            <!-- Category Breakdown -->
+            <div class="section-card">
+                <h2>Products by Category</h2>
+                <div id="categoryBreakdown" class="category-list"></div>
+            </div>
+        </main>
+    </div>
+    
+    <script src="admin.js"></script>
+    <script>
+        // Load stats on page load
+        window.addEventListener('DOMContentLoaded', () => {
+            loadDashboard();
+        });
+    </script>
+</body>
+</html>
