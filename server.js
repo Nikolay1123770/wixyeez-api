@@ -2,7 +2,6 @@ const express = require('express');
 const cors = require('cors');
 const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
-const session = require('express-session');
 const path = require('path');
 
 const app = express();
@@ -13,18 +12,6 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static('public'));
 
-// Session configuration
-app.use(session({
-  secret: process.env.SESSION_SECRET || 'wixyeez-secret-key-2024',
-  resave: false,
-  saveUninitialized: false,
-  cookie: { 
-    secure: process.env.NODE_ENV === 'production',
-    httpOnly: true,
-    maxAge: 24 * 60 * 60 * 1000 // 24 hours
-  }
-}));
-
 // Database connection
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -32,29 +19,11 @@ const pool = new Pool({
 });
 
 // ============================================
-// MIDDLEWARE
-// ============================================
-
-// Auth check middleware
-const requireAuth = (req, res, next) => {
-  if (req.session && req.session.adminId) {
-    next();
-  } else {
-    res.status(401).json({ success: false, error: 'Unauthorized' });
-  }
-};
-
-// ============================================
 // ADMIN PANEL ROUTES
 // ============================================
 
-// Serve admin panel
 app.get('/admin', (req, res) => {
-  if (req.session && req.session.adminId) {
-    res.sendFile(path.join(__dirname, 'public', 'admin', 'dashboard.html'));
-  } else {
-    res.sendFile(path.join(__dirname, 'public', 'admin', 'login.html'));
-  }
+  res.sendFile(path.join(__dirname, 'public', 'admin', 'login.html'));
 });
 
 app.get('/admin/login', (req, res) => {
@@ -62,31 +31,21 @@ app.get('/admin/login', (req, res) => {
 });
 
 app.get('/admin/dashboard', (req, res) => {
-  if (req.session && req.session.adminId) {
-    res.sendFile(path.join(__dirname, 'public', 'admin', 'dashboard.html'));
-  } else {
-    res.redirect('/admin/login');
-  }
+  res.sendFile(path.join(__dirname, 'public', 'admin', 'dashboard.html'));
 });
 
 app.get('/admin/products', (req, res) => {
-  if (req.session && req.session.adminId) {
-    res.sendFile(path.join(__dirname, 'public', 'admin', 'products.html'));
-  } else {
-    res.redirect('/admin/login');
-  }
+  res.sendFile(path.join(__dirname, 'public', 'admin', 'products.html'));
 });
 
 // ============================================
 // API ROUTES
 // ============================================
 
-// Main page
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// Test endpoint
 app.get('/api', (req, res) => {
   res.json({ 
     success: true, 
@@ -127,7 +86,6 @@ app.get('/api/get_products.php', async (req, res) => {
   }
 });
 
-// Clean URL for products
 app.get('/api/products', async (req, res) => {
   try {
     const category = req.query.category;
@@ -155,8 +113,8 @@ app.get('/api/products', async (req, res) => {
   }
 });
 
-// Add product (protected)
-app.post('/api/add_product.php', requireAuth, async (req, res) => {
+// Add product
+app.post('/api/add_product.php', async (req, res) => {
   try {
     const { name, description, category, price, old_price, discount, emoji, image_url } = req.body;
     
@@ -181,8 +139,8 @@ app.post('/api/add_product.php', requireAuth, async (req, res) => {
   }
 });
 
-// Update product (protected)
-app.post('/api/update_product.php', requireAuth, async (req, res) => {
+// Update product
+app.post('/api/update_product.php', async (req, res) => {
   try {
     const { id, name, description, category, price, old_price, discount, emoji } = req.body;
     
@@ -207,8 +165,8 @@ app.post('/api/update_product.php', requireAuth, async (req, res) => {
   }
 });
 
-// Delete product (protected)
-app.get('/api/delete_product.php', requireAuth, async (req, res) => {
+// Delete product
+app.get('/api/delete_product.php', async (req, res) => {
   try {
     const id = req.query.id;
     await pool.query('UPDATE products SET is_active = false WHERE id = $1', [id]);
@@ -224,19 +182,23 @@ app.post('/api/login.php', async (req, res) => {
   try {
     const { username, password } = req.body;
     
+    console.log('Login attempt:', username);
+    
     const result = await pool.query('SELECT * FROM admins WHERE username = $1', [username]);
     
     if (result.rows.length > 0) {
       const admin = result.rows[0];
       const validPassword = await bcrypt.compare(password, admin.password);
       
+      console.log('Password valid:', validPassword);
+      
       if (validPassword) {
-        req.session.adminId = admin.id;
-        req.session.adminUsername = admin.username;
+        await pool.query('UPDATE admins SET last_login = NOW() WHERE id = $1', [admin.id]);
         
         res.json({ 
           success: true, 
           username: admin.username,
+          message: 'Login successful',
           redirect: '/admin/dashboard'
         });
       } else {
@@ -246,40 +208,13 @@ app.post('/api/login.php', async (req, res) => {
       res.status(401).json({ success: false, error: 'User not found' });
     }
   } catch (error) {
-    console.error('Error:', error);
+    console.error('Login error:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Logout
-app.post('/api/logout', (req, res) => {
-  req.session.destroy((err) => {
-    if (err) {
-      res.status(500).json({ success: false, error: err.message });
-    } else {
-      res.json({ success: true });
-    }
-  });
-});
-
-// Check auth status
-app.get('/api/auth/check', (req, res) => {
-  if (req.session && req.session.adminId) {
-    res.json({ 
-      success: true, 
-      authenticated: true,
-      username: req.session.adminUsername 
-    });
-  } else {
-    res.json({ 
-      success: true, 
-      authenticated: false 
-    });
-  }
-});
-
-// Stats (protected)
-app.get('/api/stats.php', requireAuth, async (req, res) => {
+// Stats - БЕЗ проверки авторизации
+app.get('/api/stats.php', async (req, res) => {
   try {
     const productsResult = await pool.query('SELECT COUNT(*) FROM products WHERE is_active = true');
     const ordersResult = await pool.query('SELECT COUNT(*), COALESCE(SUM(total_amount), 0) as revenue FROM orders');
@@ -287,7 +222,6 @@ app.get('/api/stats.php', requireAuth, async (req, res) => {
       "SELECT COUNT(*), COALESCE(SUM(total_amount), 0) as revenue FROM orders WHERE DATE(created_at) = CURRENT_DATE"
     );
     
-    // Category breakdown
     const categoryResult = await pool.query(
       'SELECT category, COUNT(*) as count FROM products WHERE is_active = true GROUP BY category'
     );
@@ -304,15 +238,14 @@ app.get('/api/stats.php', requireAuth, async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Error:', error);
+    console.error('Stats error:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Initialize database tables
+// Initialize database
 app.get('/api/init', async (req, res) => {
   try {
-    // Create tables
     await pool.query(`
       CREATE TABLE IF NOT EXISTS products (
         id SERIAL PRIMARY KEY,
@@ -352,20 +285,16 @@ app.get('/api/init', async (req, res) => {
       )
     `);
     
-    // Check if admin exists
     const adminCheck = await pool.query('SELECT * FROM admins WHERE username = $1', ['admin']);
     
     if (adminCheck.rows.length === 0) {
-      // Create admin (password: admin123)
       const hashedPassword = await bcrypt.hash('admin123', 10);
       await pool.query('INSERT INTO admins (username, password) VALUES ($1, $2)', ['admin', hashedPassword]);
     }
     
-    // Check if products exist
     const productsCheck = await pool.query('SELECT COUNT(*) FROM products');
     
     if (parseInt(productsCheck.rows[0].count) === 0) {
-      // Add sample products
       const products = [
         ['Сопровождение на 8 карту 20кк', 'Сопровождений на 8 карту 20кк выдаём фулл 6 с МК ВК', 'Сопровождение', 250, 250, 0, '🎯'],
         ['Буст CS2 Ранга', 'До любого ранга, быстро и безопасно', 'Услуги', 1990, 2500, 20, '🛡️'],
@@ -398,7 +327,5 @@ app.get('/api/init', async (req, res) => {
 
 // Start server
 app.listen(PORT, () => {
-  console.log(`🚀 WIXYEEZ API + Admin Panel running on port ${PORT}`);
-  console.log(`📊 Admin panel: http://localhost:${PORT}/admin`);
-  console.log(`🔌 API endpoint: http://localhost:${PORT}/api`);
+  console.log(`🚀 WIXYEEZ API running on port ${PORT}`);
 });
