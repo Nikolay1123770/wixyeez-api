@@ -18,17 +18,17 @@
             <form id="loginForm">
                 <div class="form-group">
                     <label>Username</label>
-                    <input type="text" id="username" placeholder="Enter username" required>
+                    <input type="text" id="username" placeholder="Enter username" value="admin" required>
                 </div>
                 
                 <div class="form-group">
                     <label>Password</label>
-                    <input type="password" id="password" placeholder="Enter password" required>
+                    <input type="password" id="password" placeholder="Enter password" value="admin123" required>
                 </div>
                 
                 <div id="errorMessage" class="error-message"></div>
                 
-                <button type="submit" class="btn-login">
+                <button type="submit" class="btn-login" id="loginBtn">
                     Login <span class="btn-icon">→</span>
                 </button>
             </form>
@@ -39,6 +39,60 @@
         </div>
     </div>
     
-    <script src="admin.js"></script>
+    <script>
+        // Login handler
+        document.getElementById('loginForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const errorEl = document.getElementById('errorMessage');
+            const loginBtn = document.getElementById('loginBtn');
+            
+            // Disable button
+            loginBtn.disabled = true;
+            loginBtn.innerHTML = 'Loading...';
+            errorEl.style.display = 'none';
+            
+            console.log('Attempting login...', { username });
+            
+            try {
+                const response = await fetch('/api/login.php', {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
+                    },
+                    credentials: 'include',
+                    body: JSON.stringify({ username, password })
+                });
+                
+                console.log('Response status:', response.status);
+                
+                const data = await response.json();
+                console.log('Response data:', data);
+                
+                if (data.success) {
+                    // Save to localStorage
+                    localStorage.setItem('admin_logged_in', 'true');
+                    localStorage.setItem('admin_username', data.username);
+                    
+                    // Redirect
+                    window.location.href = '/admin/dashboard';
+                } else {
+                    errorEl.textContent = data.error || 'Login failed';
+                    errorEl.style.display = 'block';
+                    loginBtn.disabled = false;
+                    loginBtn.innerHTML = 'Login <span class="btn-icon">→</span>';
+                }
+            } catch (error) {
+                console.error('Login error:', error);
+                errorEl.textContent = 'Connection error: ' + error.message;
+                errorEl.style.display = 'block';
+                loginBtn.disabled = false;
+                loginBtn.innerHTML = 'Login <span class="btn-icon">→</span>';
+            }
+        });
+    </script>
 </body>
 </html>
