@@ -15,21 +15,31 @@
                 <p>Admin Panel</p>
             </div>
             
+            <!-- Debug Panel -->
+            <div id="debugPanel" style="background: #f0f0f0; padding: 10px; border-radius: 8px; margin-bottom: 20px; font-size: 12px; color: #333; display: none;">
+                <strong>🔍 Debug Log:</strong>
+                <div id="debugLog" style="margin-top: 10px; max-height: 150px; overflow-y: auto;"></div>
+            </div>
+            
             <form id="loginForm">
                 <div class="form-group">
                     <label>Username</label>
-                    <input type="text" id="username" placeholder="Enter username" value="admin" required>
+                    <input type="text" id="username" placeholder="admin" value="admin" required>
                 </div>
                 
                 <div class="form-group">
                     <label>Password</label>
-                    <input type="password" id="password" placeholder="Enter password" value="admin123" required>
+                    <input type="password" id="password" placeholder="admin123" value="admin123" required>
                 </div>
                 
                 <div id="errorMessage" class="error-message"></div>
                 
                 <button type="submit" class="btn-login" id="loginBtn">
-                    Login <span class="btn-icon">→</span>
+                    Login →
+                </button>
+                
+                <button type="button" class="btn-secondary" onclick="toggleDebug()" style="width: 100%; margin-top: 10px; padding: 10px; background: #e0e0e0; border: none; border-radius: 8px; cursor: pointer;">
+                    🔍 Show Debug
                 </button>
             </form>
             
@@ -40,6 +50,42 @@
     </div>
     
     <script>
+        let debugMode = false;
+        
+        function toggleDebug() {
+            debugMode = !debugMode;
+            document.getElementById('debugPanel').style.display = debugMode ? 'block' : 'none';
+        }
+        
+        function addLog(message, type = 'info') {
+            const logDiv = document.getElementById('debugLog');
+            const time = new Date().toLocaleTimeString();
+            const colors = {
+                info: '#0066cc',
+                success: '#00aa00',
+                error: '#cc0000'
+            };
+            logDiv.innerHTML += `<div style="color: ${colors[type]}; margin: 5px 0;">[${time}] ${message}</div>`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+            console.log(message);
+        }
+        
+        // Test API on load
+        window.addEventListener('DOMContentLoaded', async () => {
+            addLog('📱 Page loaded on Android');
+            
+            // Test API connection
+            try {
+                addLog('🔌 Testing API connection...');
+                const response = await fetch('/api');
+                addLog(`✅ API Status: ${response.status}`);
+                const data = await response.json();
+                addLog(`📦 API Response: ${JSON.stringify(data)}`);
+            } catch (error) {
+                addLog(`❌ API Error: ${error.message}`, 'error');
+            }
+        });
+        
         // Login handler
         document.getElementById('loginForm').addEventListener('submit', async (e) => {
             e.preventDefault();
@@ -49,48 +95,68 @@
             const errorEl = document.getElementById('errorMessage');
             const loginBtn = document.getElementById('loginBtn');
             
+            // Show debug panel
+            document.getElementById('debugPanel').style.display = 'block';
+            debugMode = true;
+            
             // Disable button
             loginBtn.disabled = true;
-            loginBtn.innerHTML = 'Loading...';
+            loginBtn.textContent = 'Loading...';
             errorEl.style.display = 'none';
             
-            console.log('Attempting login...', { username });
+            addLog('🔐 Login attempt started');
+            addLog(`👤 Username: ${username}`);
             
             try {
+                addLog('📡 Sending request to /api/login.php');
+                
                 const response = await fetch('/api/login.php', {
                     method: 'POST',
                     headers: { 
                         'Content-Type': 'application/json',
                         'Accept': 'application/json'
                     },
-                    credentials: 'include',
                     body: JSON.stringify({ username, password })
                 });
                 
-                console.log('Response status:', response.status);
+                addLog(`📥 Response status: ${response.status}`, response.ok ? 'success' : 'error');
                 
                 const data = await response.json();
-                console.log('Response data:', data);
+                addLog(`📦 Response data: ${JSON.stringify(data)}`);
                 
                 if (data.success) {
+                    addLog('✅ Login successful!', 'success');
+                    
                     // Save to localStorage
                     localStorage.setItem('admin_logged_in', 'true');
                     localStorage.setItem('admin_username', data.username);
+                    addLog('💾 Saved to localStorage');
                     
-                    // Redirect
-                    window.location.href = '/admin/dashboard';
+                    // Show success message
+                    errorEl.style.display = 'block';
+                    errorEl.style.background = '#d4edda';
+                    errorEl.style.color = '#155724';
+                    errorEl.textContent = '✅ Login successful! Redirecting...';
+                    
+                    addLog('🔄 Redirecting to dashboard...');
+                    
+                    // Redirect after 2 seconds
+                    setTimeout(() => {
+                        window.location.href = '/admin/dashboard';
+                    }, 2000);
                 } else {
+                    addLog(`❌ Login failed: ${data.error}`, 'error');
                     errorEl.textContent = data.error || 'Login failed';
                     errorEl.style.display = 'block';
                     loginBtn.disabled = false;
-                    loginBtn.innerHTML = 'Login <span class="btn-icon">→</span>';
+                    loginBtn.textContent = 'Login →';
                 }
             } catch (error) {
-                console.error('Login error:', error);
+                addLog(`❌ Connection error: ${error.message}`, 'error');
                 errorEl.textContent = 'Connection error: ' + error.message;
                 errorEl.style.display = 'block';
                 loginBtn.disabled = false;
-                loginBtn.innerHTML = 'Login <span class="btn-icon">→</span>';
+                loginBtn.textContent = 'Login →';
             }
         });
     </script>
