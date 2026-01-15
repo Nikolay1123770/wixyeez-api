@@ -2,6 +2,8 @@ const express = require('express');
 const cors = require('cors');
 const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
+const session = require('express-session');
+const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -9,6 +11,19 @@ const PORT = process.env.PORT || 3000;
 // Middleware
 app.use(cors());
 app.use(express.json());
+app.use(express.static('public'));
+
+// Session configuration
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'wixyeez-secret-key-2024',
+  resave: false,
+  saveUninitialized: false,
+  cookie: { 
+    secure: process.env.NODE_ENV === 'production',
+    httpOnly: true,
+    maxAge: 24 * 60 * 60 * 1000 // 24 hours
+  }
+}));
 
 // Database connection
 const pool = new Pool({
@@ -17,15 +32,70 @@ const pool = new Pool({
 });
 
 // ============================================
+// MIDDLEWARE
+// ============================================
+
+// Auth check middleware
+const requireAuth = (req, res, next) => {
+  if (req.session && req.session.adminId) {
+    next();
+  } else {
+    res.status(401).json({ success: false, error: 'Unauthorized' });
+  }
+};
+
+// ============================================
+// ADMIN PANEL ROUTES
+// ============================================
+
+// Serve admin panel
+app.get('/admin', (req, res) => {
+  if (req.session && req.session.adminId) {
+    res.sendFile(path.join(__dirname, 'public', 'admin', 'dashboard.html'));
+  } else {
+    res.sendFile(path.join(__dirname, 'public', 'admin', 'login.html'));
+  }
+});
+
+app.get('/admin/login', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'admin', 'login.html'));
+});
+
+app.get('/admin/dashboard', (req, res) => {
+  if (req.session && req.session.adminId) {
+    res.sendFile(path.join(__dirname, 'public', 'admin', 'dashboard.html'));
+  } else {
+    res.redirect('/admin/login');
+  }
+});
+
+app.get('/admin/products', (req, res) => {
+  if (req.session && req.session.adminId) {
+    res.sendFile(path.join(__dirname, 'public', 'admin', 'products.html'));
+  } else {
+    res.redirect('/admin/login');
+  }
+});
+
+// ============================================
 // API ROUTES
 // ============================================
 
-// Test endpoint
+// Main page
 app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// Test endpoint
+app.get('/api', (req, res) => {
   res.json({ 
     success: true, 
-    message: 'WIXYEEZ API is running!',
-    version: '1.0.0'
+    message: 'WIXYEEZ API v2.0',
+    endpoints: {
+      products: '/api/products',
+      admin: '/admin',
+      api_docs: '/api/docs'
+    }
   });
 });
 
@@ -57,7 +127,7 @@ app.get('/api/get_products.php', async (req, res) => {
   }
 });
 
-// Also support clean URL
+// Clean URL for products
 app.get('/api/products', async (req, res) => {
   try {
     const category = req.query.category;
@@ -85,8 +155,8 @@ app.get('/api/products', async (req, res) => {
   }
 });
 
-// Add product
-app.post('/api/add_product.php', async (req, res) => {
+// Add product (protected)
+app.post('/api/add_product.php', requireAuth, async (req, res) => {
   try {
     const { name, description, category, price, old_price, discount, emoji, image_url } = req.body;
     
@@ -111,34 +181,8 @@ app.post('/api/add_product.php', async (req, res) => {
   }
 });
 
-// Also support clean URL
-app.post('/api/products', async (req, res) => {
-  try {
-    const { name, description, category, price, old_price, discount, emoji, image_url } = req.body;
-    
-    const emojis = {
-      'Услуги': '🛡️',
-      'Сеты': '📦',
-      'Сопровождение': '🎯'
-    };
-    
-    const productEmoji = emoji || emojis[category] || '🔥';
-    
-    const result = await pool.query(
-      `INSERT INTO products (name, description, category, price, old_price, discount, emoji, image_url)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
-      [name, description, category, price, old_price || price, discount || 0, productEmoji, image_url]
-    );
-    
-    res.json({ success: true, id: result.rows[0].id });
-  } catch (error) {
-    console.error('Error:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Update product
-app.post('/api/update_product.php', async (req, res) => {
+// Update product (protected)
+app.post('/api/update_product.php', requireAuth, async (req, res) => {
   try {
     const { id, name, description, category, price, old_price, discount, emoji } = req.body;
     
@@ -163,8 +207,8 @@ app.post('/api/update_product.php', async (req, res) => {
   }
 });
 
-// Delete product
-app.get('/api/delete_product.php', async (req, res) => {
+// Delete product (protected)
+app.get('/api/delete_product.php', requireAuth, async (req, res) => {
   try {
     const id = req.query.id;
     await pool.query('UPDATE products SET is_active = false WHERE id = $1', [id]);
@@ -187,7 +231,14 @@ app.post('/api/login.php', async (req, res) => {
       const validPassword = await bcrypt.compare(password, admin.password);
       
       if (validPassword) {
-        res.json({ success: true, username: admin.username });
+        req.session.adminId = admin.id;
+        req.session.adminUsername = admin.username;
+        
+        res.json({ 
+          success: true, 
+          username: admin.username,
+          redirect: '/admin/dashboard'
+        });
       } else {
         res.status(401).json({ success: false, error: 'Invalid password' });
       }
@@ -200,13 +251,45 @@ app.post('/api/login.php', async (req, res) => {
   }
 });
 
-// Stats
-app.get('/api/stats.php', async (req, res) => {
+// Logout
+app.post('/api/logout', (req, res) => {
+  req.session.destroy((err) => {
+    if (err) {
+      res.status(500).json({ success: false, error: err.message });
+    } else {
+      res.json({ success: true });
+    }
+  });
+});
+
+// Check auth status
+app.get('/api/auth/check', (req, res) => {
+  if (req.session && req.session.adminId) {
+    res.json({ 
+      success: true, 
+      authenticated: true,
+      username: req.session.adminUsername 
+    });
+  } else {
+    res.json({ 
+      success: true, 
+      authenticated: false 
+    });
+  }
+});
+
+// Stats (protected)
+app.get('/api/stats.php', requireAuth, async (req, res) => {
   try {
     const productsResult = await pool.query('SELECT COUNT(*) FROM products WHERE is_active = true');
     const ordersResult = await pool.query('SELECT COUNT(*), COALESCE(SUM(total_amount), 0) as revenue FROM orders');
     const todayResult = await pool.query(
       "SELECT COUNT(*), COALESCE(SUM(total_amount), 0) as revenue FROM orders WHERE DATE(created_at) = CURRENT_DATE"
+    );
+    
+    // Category breakdown
+    const categoryResult = await pool.query(
+      'SELECT category, COUNT(*) as count FROM products WHERE is_active = true GROUP BY category'
     );
     
     res.json({
@@ -216,7 +299,8 @@ app.get('/api/stats.php', async (req, res) => {
         orders: parseInt(ordersResult.rows[0].count),
         revenue: parseFloat(ordersResult.rows[0].revenue),
         today_orders: parseInt(todayResult.rows[0].count),
-        today_revenue: parseFloat(todayResult.rows[0].revenue)
+        today_revenue: parseFloat(todayResult.rows[0].revenue),
+        categories: categoryResult.rows
       }
     });
   } catch (error) {
@@ -262,7 +346,7 @@ app.get('/api/init', async (req, res) => {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS admins (
         id SERIAL PRIMARY KEY,
-        username VARCHAR(50) NOT NULL,
+        username VARCHAR(50) UNIQUE NOT NULL,
         password VARCHAR(255) NOT NULL,
         last_login TIMESTAMP
       )
@@ -298,7 +382,14 @@ app.get('/api/init', async (req, res) => {
       }
     }
     
-    res.json({ success: true, message: 'Database initialized!' });
+    res.json({ 
+      success: true, 
+      message: 'Database initialized!',
+      admin_credentials: {
+        username: 'admin',
+        password: 'admin123'
+      }
+    });
   } catch (error) {
     console.error('Error:', error);
     res.status(500).json({ success: false, error: error.message });
@@ -307,5 +398,7 @@ app.get('/api/init', async (req, res) => {
 
 // Start server
 app.listen(PORT, () => {
-  console.log(`🚀 WIXYEEZ API running on port ${PORT}`);
+  console.log(`🚀 WIXYEEZ API + Admin Panel running on port ${PORT}`);
+  console.log(`📊 Admin panel: http://localhost:${PORT}/admin`);
+  console.log(`🔌 API endpoint: http://localhost:${PORT}/api`);
 });
